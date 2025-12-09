@@ -1,22 +1,35 @@
 # KMDB - 运维 CMDB 管理平台
 
-现代化的运维 CMDB（Configuration Management Database）管理平台，提供资产管理、关系管理、配置快照、审计日志和 WebSSH 功能。
+现代化的运维 CMDB（Configuration Management Database）管理平台，提供资产管理、项目管理、WebSSH、API Token 管理和完整的 RBAC 权限系统。
 
 ## 功能特性
 
-- **资产管理**：服务器、网络设备、应用及相关配置的统一登记和管理
-- **关系管理**：资产间依赖关系、拓扑关系记录
-- **配置快照**：变更记录追踪、版本管理
-- **审计日志**：操作审计、变更追踪
+### 核心功能
+- **仪表盘**：系统概览、资产统计、最新活动
+- **资产管理**：服务器、虚拟机、网络设备、应用的统一管理
+- **项目管理**：按项目组织和管理资产，支持项目级权限控制
+- **主机密钥**：SSH 凭证管理，支持密码和密钥认证
 - **WebSSH**：通过 Web 界面便捷、安全地登录和操作远程主机
-- **用户权限**：完整的 RBAC 权限管理系统
+
+### 用户与权限
+- **用户管理**：用户账号的创建、编辑、删除
+- **用户群组**：用户分组管理
+- **角色权限**：完整的 RBAC 权限管理系统
+- **用户角色**：为用户分配角色
+- **群组角色**：为群组分配角色
+
+### 开发者功能
+- **API Token**：创建和管理用于程序化访问的 Token
+- **Swagger 文档**：完整的 API 文档，支持在线测试
+- **审计日志**：操作审计、变更追踪
 
 ## 技术栈
 
-- **Backend**: Go 1.23 + Gin
-- **Frontend**: React 18 + TypeScript + Vite + TailwindCSS
+- **Backend**: Go 1.23 + Gin + GORM
+- **Frontend**: React 18 + TypeScript + Vite + TailwindCSS + shadcn/ui
 - **Database**: PostgreSQL 16
-- **WebSSH**: xterm.js + WebSocket
+- **WebSSH**: xterm.js + WebSocket + golang.org/x/crypto/ssh
+- **容器化**: Docker + Docker Compose
 
 ## 快速开始
 
@@ -40,16 +53,16 @@ docker-compose up -d
 ```
 
 4. **访问应用**
-- 前端: http://localhost
-- 后端 API: http://localhost:8080
-- 健康检查: http://localhost:8080/health
+- 前端界面: http://localhost
+- API 文档: http://localhost/api/docs/
+- 健康检查: http://localhost/health
 
 5. **默认登录账号**
 - 用户名: `admin`
-- 密码: `Admin123`（符合密码强度要求，可通过 `.env` 文件中的 `ADMIN_PASSWORD` 环境变量修改）
+- 密码: `Admin123`（可通过 `.env` 文件中的 `ADMIN_PASSWORD` 环境变量修改）
 - ⚠️ **重要**: 首次登录后请立即修改密码！
 
-5. **查看日志**
+6. **查看日志**
 ```bash
 docker-compose logs -f backend
 docker-compose logs -f frontend
@@ -122,40 +135,91 @@ kmdb/
 ├── internal/         # 内部包
 │   ├── config/       # 配置管理
 │   ├── database/     # 数据库连接
-│   └── middleware/   # 中间件
+│   └── middleware/   # 中间件（认证、日志等）
 ├── model/            # 数据模型
 ├── repository/       # 数据访问层
 ├── service/          # 业务逻辑层
-├── migrations/       # 数据库迁移
+├── migrations/       # 数据库迁移和种子数据
 ├── web/              # 前端应用
-└── openspec/         # OpenSpec 规范
+│   ├── src/
+│   │   ├── components/  # 通用组件
+│   │   ├── pages/       # 页面组件
+│   │   ├── hooks/       # 自定义 Hooks
+│   │   └── services/    # API 服务
+│   └── ...
+└── test/             # 测试相关文件
 ```
 
 ## API 文档
 
-### 认证
+### 在线文档
 
-- `POST /api/v1/auth/login` - 用户登录
-- `POST /api/v1/auth/logout` - 用户登出
-- `POST /api/v1/auth/refresh` - 刷新 Token
+访问 http://localhost/api/docs/ 查看完整的 Swagger API 文档。
 
-### 资产管理
+### 认证方式
 
-- `GET /api/v1/assets` - 获取资产列表
-- `POST /api/v1/assets` - 创建资产
-- `GET /api/v1/assets/:id` - 获取资产详情
-- `PUT /api/v1/assets/:id` - 更新资产
-- `DELETE /api/v1/assets/:id` - 删除资产
-- `GET /api/v1/assets/stats/project` - 按项目统计资产
+#### 1. JWT Token（Web 界面使用）
 
-### WebSSH
+```bash
+# 登录获取 Token
+curl -X POST http://localhost/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "Admin123"}'
 
-- `POST /api/v1/webssh/connect` - 建立 SSH 连接
-- `GET /api/v1/webssh/ws/:session_id` - WebSocket 连接
-- `POST /api/v1/webssh/:session_id/resize` - 调整终端大小
-- `DELETE /api/v1/webssh/:session_id` - 关闭会话
+# 使用 Token
+curl http://localhost/api/v1/assets \
+  -H "Authorization: Bearer <access_token>"
+```
 
-更多 API 文档请参考代码注释。
+#### 2. API Token（程序化访问）
+
+在 **API Token 管理** 页面创建 Token 后，可通过以下方式使用：
+
+```bash
+# 方式 1: X-API-Key header（推荐）
+curl http://localhost/api/v1/assets \
+  -H "X-API-Key: kmdb_xxxxxxxx"
+
+# 方式 2: Authorization Bearer header
+curl http://localhost/api/v1/assets \
+  -H "Authorization: Bearer kmdb_xxxxxxxx"
+
+# 方式 3: 查询参数
+curl "http://localhost/api/v1/assets?api_key=kmdb_xxxxxxxx"
+```
+
+### 主要 API 端点
+
+| 模块 | 方法 | 端点 | 说明 |
+|------|------|------|------|
+| **认证** | POST | `/api/v1/auth/login` | 用户登录 |
+| | POST | `/api/v1/auth/logout` | 用户登出 |
+| | POST | `/api/v1/auth/refresh` | 刷新 Token |
+| **仪表盘** | GET | `/api/v1/dashboard/stats` | 获取统计数据 |
+| **资产** | GET | `/api/v1/assets` | 获取资产列表 |
+| | POST | `/api/v1/assets` | 创建资产 |
+| | GET | `/api/v1/assets/:id` | 获取资产详情 |
+| | PUT | `/api/v1/assets/:id` | 更新资产 |
+| | DELETE | `/api/v1/assets/:id` | 删除资产 |
+| **项目** | GET | `/api/v1/projects` | 获取项目列表 |
+| | POST | `/api/v1/projects` | 创建项目 |
+| | GET | `/api/v1/projects/:id` | 获取项目详情 |
+| | PUT | `/api/v1/projects/:id` | 更新项目 |
+| | DELETE | `/api/v1/projects/:id` | 删除项目 |
+| **凭证** | GET | `/api/v1/asset-credentials` | 获取凭证列表 |
+| | POST | `/api/v1/asset-credentials` | 创建凭证 |
+| | PUT | `/api/v1/asset-credentials/:id` | 更新凭证 |
+| | DELETE | `/api/v1/asset-credentials/:id` | 删除凭证 |
+| **API Token** | GET | `/api/v1/api-tokens` | 获取 Token 列表 |
+| | POST | `/api/v1/api-tokens` | 创建 Token |
+| | GET | `/api/v1/api-tokens/my` | 获取当前用户 Token |
+| | POST | `/api/v1/api-tokens/:id/revoke` | 撤销 Token |
+| | DELETE | `/api/v1/api-tokens/:id` | 删除 Token |
+| **WebSSH** | POST | `/api/v1/webssh/connect` | 建立 SSH 连接 |
+| | GET | `/api/v1/webssh/ws/:session_id` | WebSocket 连接 |
+| | POST | `/api/v1/webssh/:session_id/resize` | 调整终端大小 |
+| | DELETE | `/api/v1/webssh/:session_id` | 关闭会话 |
+| **审计** | GET | `/api/v1/audit-logs` | 获取审计日志 |
 
 ## 环境变量
 
@@ -198,6 +262,16 @@ go run ./migrations/migrate.go
 docker-compose run --rm migrate
 ```
 
+### 初始化测试数据
+
+```bash
+# 运行种子数据
+go run ./migrations/seed.go
+
+# 运行示例数据（包含更多测试资产）
+go run ./migrations/fixtures.go
+```
+
 ## 测试
 
 ```bash
@@ -223,28 +297,16 @@ ENV=production
 
 2. **构建和启动**
 ```bash
-# 使用 Makefile
-make build
-make up
-
-# 或直接使用 docker-compose
 docker-compose up -d --build
 ```
 
-3. **查看服务状态**
-```bash
-make ps
-# 或
-docker-compose ps
-```
-
-4. **验证部署**
+3. **验证部署**
 ```bash
 # 检查健康状态
-curl http://localhost:8080/health
+curl http://localhost/health
 
-# 检查前端
-curl http://localhost
+# 检查 API
+curl http://localhost/api/v1/health
 ```
 
 ### 使用 HTTPS
@@ -269,12 +331,14 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location /api/ {
-        proxy_pass http://localhost:8080;
+    # WebSocket 支持
+    location /api/v1/webssh/ws/ {
+        proxy_pass http://localhost:80;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
     }
 }
 ```
@@ -289,10 +353,34 @@ docker-compose exec postgres pg_dump -U postgres kmdb > backup.sql
 docker-compose exec -T postgres psql -U postgres kmdb < backup.sql
 ```
 
+## 截图
+
+### 仪表盘
+系统概览，展示资产统计、用户数量、最新活动等信息。
+
+### 资产管理
+支持按项目分组查看，可搜索、筛选资产。
+
+### WebSSH
+Web 终端，支持多标签、收藏、分组等功能。
+
+### API Token
+创建和管理程序化访问的 Token。
+
 ## 许可证
 
-[添加许可证信息]
+MIT License
 
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。
+
+## 更新日志
+
+### v1.0.0
+- 初始版本
+- 资产管理、项目管理
+- WebSSH 终端
+- RBAC 权限系统
+- API Token 管理
+- Swagger API 文档
