@@ -1,0 +1,62 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # 使用 Ubuntu 22.04 LTS
+  config.vm.box = "ubuntu/jammy64"
+
+  # 虚拟机名称
+  config.vm.hostname = "kmdb-test-ubuntu"
+
+  # 虚拟机配置：1核1G
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "kmdb-test-ubuntu"
+    vb.memory = "1024"
+    vb.cpus = 1
+  end
+
+  # 私有网络（host-only）
+  config.vm.network "private_network", ip: "192.168.56.100"
+
+  # SSH 端口映射（改回正确写法）
+  config.vm.network "forwarded_port", guest: 22, host: 2222, id: "ssh"
+
+  # 同步目录（可选）
+  # config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # Provision 脚本
+  config.vm.provision "shell", inline: <<-SHELL
+    apt-get update
+    apt-get install -y openssh-server
+
+    systemctl enable ssh
+    systemctl start ssh
+
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+    if ! id -u testuser &>/dev/null; then
+      useradd -m -s /bin/bash testuser
+      echo "testuser:Test123456" | chpasswd
+      usermod -aG sudo testuser
+    fi
+
+    mkdir -p /home/testuser/.ssh
+    chmod 700 /home/testuser/.ssh
+
+    cat <<EOF > /home/testuser/.ssh/authorized_keys
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsb9TODHjq67BDp+Zn7j5P9daWz9n+vBtwaT+HPwpQXS6+V8nn0o3yzkLNDUYiCkQgmlYXeMOBwyw2n7j5GpZa3akaE/TFg6aeMcpZWcOCeT6QB/tJX4LLJlWOpzbMcOezdYrgBeESaIOb5MLRt73bW1L5YloPKZo30UJ/0e+eksfRYULMp7D+stAnkjN0hHRLOqvppIhZSZkHcmHzTW9DU1lbAriZgP1TMQRLo/ENiuHMJP3oWxF+G0Kbv6qRymSyxOlYiEEcBlgZZnXZt6mA2ODKraDqLP2/VQ7o1zjWoRZiteOw+zMw4HPTS7USGJnOJ89Tg5+MkzgomlYo4tPL vagrant@kmdb-test
+EOF
+
+    chmod 600 /home/testuser/.ssh/authorized_keys
+    chown -R testuser:testuser /home/testuser/.ssh
+
+    systemctl restart ssh
+
+    echo "VM 配置完成！"
+    echo "IP: 192.168.56.100"
+    echo "SSH: ssh testuser@192.168.56.100"
+    echo "Port Forward: ssh -p 2222 testuser@localhost"
+  SHELL
+end

@@ -1,0 +1,171 @@
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:16-alpine
+    container_name: kmdb-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-kmdb}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kmdb-network
+
+  # 数据库迁移服务
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    container_name: kmdb-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-kmdb}
+      DB_SSLMODE: disable
+    networks:
+      - kmdb-network
+    restart: "no"
+
+  # 数据库种子服务（创建默认用户）
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.seed
+    container_name: kmdb-seed
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-kmdb}
+      DB_SSLMODE: disable
+      # 默认管理员账号配置
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@kmdb.local}
+    networks:
+      - kmdb-network
+    restart: "no"
+
+  # 权限初始化服务
+  init-permissions:
+    build:
+      context: .
+      dockerfile: Dockerfile.init-permissions
+    container_name: kmdb-init-permissions
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-kmdb}
+      DB_SSLMODE: disable
+    networks:
+      - kmdb-network
+    restart: "no"
+
+  # 测试数据服务
+  fixtures:
+    build:
+      context: .
+      dockerfile: Dockerfile.fixtures
+    container_name: kmdb-fixtures
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-kmdb}
+      DB_SSLMODE: disable
+    networks:
+      - kmdb-network
+    restart: "no"
+    profiles:
+      - fixtures
+
+  # 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kmdb-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-kmdb}
+      DB_SSLMODE: disable
+      PORT: 8080
+      ENV: ${ENV:-production}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./logs:/root/logs
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - kmdb-network
+    restart: unless-stopped
+
+  # 前端服务
+  frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: kmdb-frontend
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    networks:
+      - kmdb-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  kmdb-network:
+    driver: bridge
+

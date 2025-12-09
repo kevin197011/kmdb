@@ -1,0 +1,11 @@
+# Vagrant
+.vagrant/
+*.box
+
+# SSH keys (保留公钥用于文档，但私钥应该保密)
+vagrant_key
+!vagrant_key.pub
+
+# 日志文件
+*.log
+
