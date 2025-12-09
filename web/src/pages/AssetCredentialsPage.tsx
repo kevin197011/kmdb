@@ -15,10 +15,14 @@ interface Credential {
 }
 
 export default function AssetCredentialsPage() {
+  const { toast } = useToast()
+  const { confirm, ConfirmDialog } = useConfirm()
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [editingCredential, setEditingCredential] = useState<Credential | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [selectedCredential, setSelectedCredential] = useState<Credential | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     username: '',
@@ -29,8 +33,6 @@ export default function AssetCredentialsPage() {
     passphrase: '',
     description: '',
   })
-  const { toast } = useToast()
-  const { confirm, ConfirmDialog } = useConfirm()
 
   useEffect(() => {
     fetchCredentials()
@@ -39,18 +41,24 @@ export default function AssetCredentialsPage() {
   const fetchCredentials = async () => {
     setLoading(true)
     try {
-      // 获取所有凭证（包括未关联资产的）
       const response = await api.get('/asset-credentials')
       setCredentials(response.data || [])
-    } catch (error: any) {
-      toast({ title: '错误', description: error.response?.data?.error || '加载凭证失败', variant: 'error' })
+    } catch {
+      toast({ title: '加载失败', description: '无法加载凭证列表', variant: 'error' })
     } finally {
       setLoading(false)
     }
   }
 
-  const handleCreate = () => {
-    setEditingCredential(null)
+  // 只显示全局凭证（不关联主机的）
+  const globalCredentials = credentials.filter(cred => !cred.asset_id)
+
+  const filteredCredentials = globalCredentials.filter(cred =>
+    cred.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    cred.username.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+
+  const resetForm = () => {
     setFormData({
       name: '',
       username: '',
@@ -61,335 +69,511 @@ export default function AssetCredentialsPage() {
       passphrase: '',
       description: '',
     })
-    setShowForm(true)
   }
 
-  const handleEdit = (credential: Credential) => {
-    setEditingCredential(credential)
-    setFormData({
-      name: credential.name,
-      username: credential.username,
-      auth_type: credential.auth_type,
-      password: '', // 不显示已加密的密码
-      private_key: '', // 不显示已加密的私钥
-      public_key: credential.public_key || '', // 公钥可以显示
-      passphrase: '',
-      description: credential.description || '',
-    })
-    setShowForm(true)
-  }
+  const handleCreate = async () => {
+    if (!formData.name.trim() || !formData.username.trim()) {
+      toast({ title: '错误', description: '请填写凭证名称和用户名', variant: 'error' })
+      return
+    }
+    if (formData.auth_type === 'password' && !formData.password) {
+      toast({ title: '错误', description: '请填写密码', variant: 'error' })
+      return
+    }
+    if (formData.auth_type === 'key' && !formData.private_key) {
+      toast({ title: '错误', description: '请填写私钥', variant: 'error' })
+      return
+    }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
     try {
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         name: formData.name,
         username: formData.username,
         auth_type: formData.auth_type,
         description: formData.description,
-        is_default: false, // 全局凭证不需要默认设置
+        is_default: false,
       }
-
       if (formData.auth_type === 'password') {
-        if (formData.password) {
-          payload.password = formData.password
-        }
+        payload.password = formData.password
       } else {
-        if (formData.private_key) {
-          payload.private_key = formData.private_key
-        }
-        if (formData.public_key) {
-          payload.public_key = formData.public_key
-        }
-        if (formData.passphrase) {
-          payload.passphrase = formData.passphrase
-        }
+        payload.private_key = formData.private_key
+        if (formData.public_key) payload.public_key = formData.public_key
+        if (formData.passphrase) payload.passphrase = formData.passphrase
       }
 
-      if (editingCredential) {
-        await api.put(`/asset-credentials/${editingCredential.id}`, payload)
-        toast({ title: '成功', description: '凭证更新成功', variant: 'success' })
-      } else {
-        await api.post('/asset-credentials', payload)
-        toast({ title: '成功', description: '凭证创建成功', variant: 'success' })
-      }
-      setShowForm(false)
+      await api.post('/asset-credentials', payload)
+      toast({ title: '成功', description: '凭证创建成功' })
+      setShowCreateDialog(false)
+      resetForm()
       fetchCredentials()
-    } catch (error: any) {
-      toast({ title: '错误', description: error.response?.data?.error || '操作失败', variant: 'error' })
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: string } } }
+      toast({ title: '创建失败', description: err.response?.data?.error || '创建凭证失败', variant: 'error' })
     }
   }
 
-  const handleDelete = async (id: string) => {
-    const confirmed = await confirm('确认删除', '确定要删除这个凭证吗？此操作不可恢复。')
-    if (!confirmed) return
-
+  const handleUpdate = async () => {
+    if (!selectedCredential) return
     try {
-      await api.delete(`/asset-credentials/${id}`)
-      toast({ title: '成功', description: '凭证删除成功', variant: 'success' })
+      const payload: Record<string, unknown> = {
+        name: formData.name,
+        username: formData.username,
+        auth_type: formData.auth_type,
+        description: formData.description,
+      }
+      if (formData.auth_type === 'password' && formData.password) {
+        payload.password = formData.password
+      } else if (formData.auth_type === 'key') {
+        if (formData.private_key) payload.private_key = formData.private_key
+        if (formData.public_key) payload.public_key = formData.public_key
+        if (formData.passphrase) payload.passphrase = formData.passphrase
+      }
+
+      await api.put(`/asset-credentials/${selectedCredential.id}`, payload)
+      toast({ title: '成功', description: '凭证更新成功' })
+      setShowEditDialog(false)
       fetchCredentials()
-    } catch (error: any) {
-      toast({ title: '错误', description: error.response?.data?.error || '删除失败', variant: 'error' })
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: string } } }
+      toast({ title: '更新失败', description: err.response?.data?.error || '更新凭证失败', variant: 'error' })
     }
   }
 
-  // 只显示全局凭证（不关联主机的）
-  const globalCredentials = credentials.filter(cred => !cred.asset_id)
+  const handleDelete = async (credential: Credential) => {
+    const confirmed = await confirm('确认删除', `确定要删除凭证 "${credential.name}" 吗？`)
+    if (!confirmed) return
+    try {
+      await api.delete(`/asset-credentials/${credential.id}`)
+      toast({ title: '成功', description: '凭证已删除' })
+      fetchCredentials()
+    } catch {
+      toast({ title: '删除失败', description: '无法删除凭证', variant: 'error' })
+    }
+  }
+
+  const openEdit = (credential: Credential) => {
+    setSelectedCredential(credential)
+    setFormData({
+      name: credential.name,
+      username: credential.username,
+      auth_type: credential.auth_type,
+      password: '',
+      private_key: '',
+      public_key: credential.public_key || '',
+      passphrase: '',
+      description: credential.description || '',
+    })
+    setShowEditDialog(true)
+  }
+
+  const openCreate = () => {
+    resetForm()
+    setShowCreateDialog(true)
+  }
 
   return (
-    <>
+    <div className="container mx-auto p-6">
       <ConfirmDialog />
-      <div className="p-8">
-        <div className="flex justify-between items-center mb-6">
+
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">主机密钥</h1>
+          <p className="text-gray-500 mt-1">管理 SSH 凭证，用于 WebSSH 连接主机</p>
+        </div>
+        <button
+          onClick={openCreate}
+          className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm"
+        >
+          + 新建凭证
+        </button>
+      </div>
+
+      {/* 提示信息 */}
+      <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">🔐</span>
           <div>
-            <h1 className="text-2xl font-bold">主机密钥管理</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              管理全局凭证，所有主机都可以使用这些凭证进行连接
-            </p>
+            <div className="font-medium text-blue-800">全局凭证说明</div>
+            <div className="text-sm text-blue-600 mt-1">
+              全局凭证可用于连接任意主机。在 WebSSH 连接时，您可以选择使用已保存的凭证，无需重复输入账号密码。
+              敏感数据（密码、私钥）已加密存储。
+            </div>
           </div>
+        </div>
+      </div>
+
+      {/* 搜索和统计 */}
+      <div className="mb-6 bg-white border rounded-xl shadow-sm overflow-hidden">
+        <div className="p-4 border-b bg-gradient-to-r from-gray-50 to-white">
+          <div className="relative max-w-md">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+            <input
+              type="text"
+              placeholder="搜索凭证名称或用户名..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            />
+          </div>
+        </div>
+        <div className="px-4 py-2.5 bg-gray-50 text-sm text-gray-600 flex items-center justify-between">
+          <span>
+            共 <span className="font-semibold text-gray-900">{filteredCredentials.length}</span> 个凭证
+          </span>
+          <div className="flex gap-4 text-xs">
+            <span className="flex items-center gap-1">
+              🔑 密钥认证 {filteredCredentials.filter(c => c.auth_type === 'key').length}
+            </span>
+            <span className="flex items-center gap-1">
+              🔒 密码认证 {filteredCredentials.filter(c => c.auth_type === 'password').length}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 凭证表格 */}
+      {loading ? (
+        <div className="text-center py-12 text-gray-500">
+          <div className="animate-spin inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mb-4" />
+          <div>加载中...</div>
+        </div>
+      ) : filteredCredentials.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-xl border shadow-sm">
+          <div className="text-5xl mb-4">🔑</div>
+          <div className="text-gray-500 mb-4">暂无凭证数据</div>
           <button
-            onClick={handleCreate}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-2"
-            title="创建新的全局凭证（SSH密码或密钥）"
+            onClick={openCreate}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            <span>➕</span>
-            <span>新建凭证</span>
+            创建第一个凭证
           </button>
         </div>
+      ) : (
+        <div className="bg-white border rounded-xl shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gradient-to-r from-gray-50 to-gray-100 border-b">
+                  <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">凭证名称</th>
+                  <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">用户名</th>
+                  <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">认证方式</th>
+                  <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">描述</th>
+                  <th className="px-4 py-3.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">创建时间</th>
+                  <th className="px-4 py-3.5 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredCredentials.map((credential, index) => (
+                  <tr
+                    key={credential.id}
+                    className={`hover:bg-blue-50/50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}
+                  >
+                    {/* 凭证名称 */}
+                    <td className="px-4 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg ${
+                          credential.auth_type === 'key' ? 'bg-green-100' : 'bg-amber-100'
+                        }`}>
+                          {credential.auth_type === 'key' ? '🔑' : '🔒'}
+                        </div>
+                        <div className="font-medium text-gray-900">{credential.name}</div>
+                      </div>
+                    </td>
 
-        {/* 创建/编辑表单 */}
-        {showForm && (
-          <div className="mb-6 p-4 border rounded bg-white">
-            <h2 className="text-xl font-semibold mb-4">
-              {editingCredential ? '编辑凭证' : '新建凭证'}
-            </h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded">
-                <div className="flex items-center gap-2">
-                  <span className="text-blue-600">🌐</span>
-                  <div>
-                    <div className="font-medium text-blue-700">全局凭证</div>
-                    <div className="text-xs text-blue-600 mt-1">
-                      所有主机都可以使用此凭证进行连接
-                    </div>
-                  </div>
-                </div>
-              </div>
+                    {/* 用户名 */}
+                    <td className="px-4 py-3.5">
+                      <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">{credential.username}</span>
+                    </td>
 
+                    {/* 认证方式 */}
+                    <td className="px-4 py-3.5">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                        credential.auth_type === 'key'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {credential.auth_type === 'key' ? '🔑 SSH 密钥' : '🔒 密码'}
+                      </span>
+                    </td>
+
+                    {/* 描述 */}
+                    <td className="px-4 py-3.5">
+                      <span className="text-sm text-gray-600 truncate max-w-xs block">
+                        {credential.description || <span className="text-gray-400">-</span>}
+                      </span>
+                    </td>
+
+                    {/* 创建时间 */}
+                    <td className="px-4 py-3.5">
+                      <span className="text-sm text-gray-600">
+                        {new Date(credential.created_at).toLocaleDateString('zh-CN')}
+                      </span>
+                    </td>
+
+                    {/* 操作 */}
+                    <td className="px-4 py-3.5">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => openEdit(credential)}
+                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="编辑"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => handleDelete(credential)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="删除"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 创建凭证对话框 */}
+      {showCreateDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 border-b bg-gradient-to-r from-blue-600 to-indigo-600">
+              <h2 className="text-xl font-bold text-white">新建凭证</h2>
+            </div>
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               <div>
-                <label className="block mb-1 text-sm font-medium">凭证名称 *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">凭证名称 *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border rounded"
-                  placeholder="如：root账号、admin账号"
-                  required
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="如：生产环境 root 账号"
                 />
               </div>
-
               <div>
-                <label className="block mb-1 text-sm font-medium">用户名 *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">用户名 *</label>
                 <input
                   type="text"
                   value={formData.username}
                   onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  className="w-full px-3 py-2 border rounded"
-                  required
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="root"
                 />
               </div>
-
               <div>
-                <label className="block mb-1 text-sm font-medium">认证类型 *</label>
-                <select
-                  value={formData.auth_type}
-                  onChange={(e) => setFormData({ ...formData, auth_type: e.target.value as 'password' | 'key' })}
-                  className="w-full px-3 py-2 border rounded"
-                  required
-                >
-                  <option value="password">密码认证</option>
-                  <option value="key">密钥认证</option>
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-1">认证方式</label>
+                <div className="flex gap-4">
+                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${formData.auth_type === 'password' ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                    <input
+                      type="radio"
+                      name="auth_type"
+                      value="password"
+                      checked={formData.auth_type === 'password'}
+                      onChange={(e) => setFormData({ ...formData, auth_type: e.target.value as 'password' | 'key' })}
+                      className="text-amber-600"
+                    />
+                    <span>🔒 密码</span>
+                  </label>
+                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${formData.auth_type === 'key' ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                    <input
+                      type="radio"
+                      name="auth_type"
+                      value="key"
+                      checked={formData.auth_type === 'key'}
+                      onChange={(e) => setFormData({ ...formData, auth_type: e.target.value as 'password' | 'key' })}
+                      className="text-green-600"
+                    />
+                    <span>🔑 SSH 密钥</span>
+                  </label>
+                </div>
               </div>
 
               {formData.auth_type === 'password' ? (
                 <div>
-                  <label className="block mb-1 text-sm font-medium">
-                    密码 {editingCredential ? '(留空则不修改)' : '*'}
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">密码 *</label>
                   <input
                     type="password"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full px-3 py-2 border rounded"
-                    required={!editingCredential}
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="输入密码"
                   />
-                  {editingCredential && (
-                    <p className="text-xs text-gray-500 mt-1">留空则保留原有密码</p>
-                  )}
                 </div>
               ) : (
                 <>
                   <div>
-                    <label className="block mb-1 text-sm font-medium">
-                      私钥 {editingCredential ? '(留空则不修改)' : '*'}
-                    </label>
-                    {editingCredential && formData.private_key === '' && (
-                      <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-700">
-                        ⚠️ 私钥已设置但出于安全考虑不显示。如需修改，请重新输入完整私钥。
-                      </div>
-                    )}
+                    <label className="block text-sm font-medium text-gray-700 mb-1">私钥 *</label>
                     <textarea
                       value={formData.private_key}
                       onChange={(e) => setFormData({ ...formData, private_key: e.target.value })}
-                      className="w-full px-3 py-2 border rounded font-mono text-sm"
-                      rows={6}
-                      placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
-                      required={!editingCredential}
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                      rows={5}
+                      placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
                     />
-                    {editingCredential && (
-                      <p className="text-xs text-gray-500 mt-1">留空则保留原有私钥</p>
-                    )}
                   </div>
                   <div>
-                    <label className="block mb-1 text-sm font-medium">公钥 (可选)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">公钥（可选）</label>
                     <textarea
                       value={formData.public_key}
                       onChange={(e) => setFormData({ ...formData, public_key: e.target.value })}
-                      className="w-full px-3 py-2 border rounded font-mono text-sm"
-                      rows={3}
-                      placeholder="ssh-rsa AAAAB3NzaC1yc2E..."
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                      rows={2}
+                      placeholder="ssh-rsa AAAAB3..."
                     />
                   </div>
                   <div>
-                    <label className="block mb-1 text-sm font-medium">密钥密码 (可选)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">私钥密码（如有）</label>
                     <input
                       type="password"
                       value={formData.passphrase}
                       onChange={(e) => setFormData({ ...formData, passphrase: e.target.value })}
-                      className="w-full px-3 py-2 border rounded"
-                      placeholder="如果私钥有密码保护，请输入"
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="如果私钥有密码保护"
                     />
                   </div>
                 </>
               )}
 
               <div>
-                <label className="block mb-1 text-sm font-medium">描述</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">描述（可选）</label>
                 <textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 border rounded"
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  rows={2}
+                  placeholder="凭证的用途说明"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+              <button onClick={() => setShowCreateDialog(false)} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors">取消</button>
+              <button onClick={handleCreate} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">创建</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑凭证对话框 */}
+      {showEditDialog && selectedCredential && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 border-b bg-gradient-to-r from-blue-600 to-indigo-600">
+              <h2 className="text-xl font-bold text-white">编辑凭证</h2>
+            </div>
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">凭证名称</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                <input
+                  type="text"
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">认证方式</label>
+                <div className="flex gap-4">
+                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${formData.auth_type === 'password' ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                    <input
+                      type="radio"
+                      name="auth_type_edit"
+                      value="password"
+                      checked={formData.auth_type === 'password'}
+                      onChange={(e) => setFormData({ ...formData, auth_type: e.target.value as 'password' | 'key' })}
+                      className="text-amber-600"
+                    />
+                    <span>🔒 密码</span>
+                  </label>
+                  <label className={`flex-1 flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition-colors ${formData.auth_type === 'key' ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                    <input
+                      type="radio"
+                      name="auth_type_edit"
+                      value="key"
+                      checked={formData.auth_type === 'key'}
+                      onChange={(e) => setFormData({ ...formData, auth_type: e.target.value as 'password' | 'key' })}
+                      className="text-green-600"
+                    />
+                    <span>🔑 SSH 密钥</span>
+                  </label>
+                </div>
+              </div>
+
+              {formData.auth_type === 'password' ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">新密码（留空则不修改）</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="输入新密码"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">新私钥（留空则不修改）</label>
+                    <textarea
+                      value={formData.private_key}
+                      onChange={(e) => setFormData({ ...formData, private_key: e.target.value })}
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                      rows={5}
+                      placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">公钥</label>
+                    <textarea
+                      value={formData.public_key}
+                      onChange={(e) => setFormData({ ...formData, public_key: e.target.value })}
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                      rows={2}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">私钥密码</label>
+                    <input
+                      type="password"
+                      value={formData.passphrase}
+                      onChange={(e) => setFormData({ ...formData, passphrase: e.target.value })}
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   rows={2}
                 />
               </div>
-
-
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  保存
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
-                >
-                  取消
-                </button>
-              </div>
-            </form>
+            </div>
+            <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+              <button onClick={() => setShowEditDialog(false)} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors">取消</button>
+              <button onClick={handleUpdate} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">保存</button>
+            </div>
           </div>
-        )}
-
-        {/* 凭证列表 */}
-        {loading ? (
-          <div className="text-center py-8">加载中...</div>
-        ) : (
-          <div>
-            {globalCredentials.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">暂无凭证</div>
-            ) : (
-              <div className="border rounded-lg overflow-hidden">
-                <div className="px-4 py-3 border-b bg-blue-50 border-blue-200">
-                  <h3 className="font-semibold text-lg text-blue-700">
-                    🌐 全局凭证（所有主机可用）
-                    <span className="ml-2 text-sm text-gray-600">
-                      ({globalCredentials.length} 个凭证)
-                    </span>
-                  </h3>
-                  <p className="text-xs text-blue-600 mt-1">
-                    这些凭证可以在连接任何主机时选择使用
-                  </p>
-                </div>
-                <div className="p-4">
-                  <div className="space-y-3">
-                    {globalCredentials.map((credential) => (
-                      <div
-                        key={credential.id}
-                        className="p-4 border rounded-lg bg-white hover:bg-gray-50"
-                      >
-                        <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                              <h4 className="font-semibold">{credential.name}</h4>
-                              <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
-                                {credential.auth_type === 'password' ? '密码' : '密钥'}
-                              </span>
-                            </div>
-                            <div className="text-sm text-gray-600 space-y-1">
-                              <p>
-                                <span className="font-medium">用户名:</span> {credential.username}
-                              </p>
-                              {credential.auth_type === 'key' && credential.public_key && (
-                                <p>
-                                  <span className="font-medium">公钥:</span>{' '}
-                                  <span className="font-mono text-xs break-all">
-                                    {credential.public_key.length > 60
-                                      ? `${credential.public_key.substring(0, 60)}...`
-                                      : credential.public_key}
-                                  </span>
-                                </p>
-                              )}
-                              {credential.description && (
-                                <p>
-                                  <span className="font-medium">描述:</span> {credential.description}
-                                </p>
-                              )}
-                              <p className="text-xs text-gray-400">
-                                创建时间: {new Date(credential.created_at).toLocaleString('zh-CN')}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex gap-1 ml-4">
-                            <button
-                              onClick={() => handleEdit(credential)}
-                              className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-                              title={`编辑凭证: ${credential.name}`}
-                            >
-                              ✏️ 编辑
-                            </button>
-                            <button
-                              onClick={() => handleDelete(credential.id)}
-                              className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                              title={`删除凭证: ${credential.name}（此操作不可恢复）`}
-                            >
-                              🗑️ 删除
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </>
+        </div>
+      )}
+    </div>
   )
 }
-

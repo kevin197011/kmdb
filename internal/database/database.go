@@ -30,6 +30,9 @@ func NewDB(cfg *config.Config) (*gorm.DB, error) {
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logLevel),
+		// 禁止在迁移时自动创建外键约束
+		// 因为 scoped_permissions 表的 SubjectID 和 ResourceID 是多态字段
+		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)

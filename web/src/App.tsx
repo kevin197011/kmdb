@@ -8,15 +8,12 @@ import AssetsPage from './pages/AssetsPage'
 import AssetCredentialsPage from './pages/AssetCredentialsPage'
 import LoginPage from './pages/LoginPage'
 import UsersPage from './pages/UsersPage'
-import UserGroupsPage from './pages/UserGroupsPage'
 import RolesPage from './pages/RolesPage'
-import UserRolesPage from './pages/UserRolesPage'
-import GroupRolesPage from './pages/GroupRolesPage'
-import AssetPermissionsPage from './pages/AssetPermissionsPage'
-import ProjectPermissionsPage from './pages/ProjectPermissionsPage'
 import AuditPage from './pages/AuditPage'
 import WebSSHPage from './pages/WebSSHPage'
 import APITokensPage from './pages/APITokensPage'
+import TeamsPage from './pages/TeamsPage'
+import ScopedPermissionsPage from './pages/ScopedPermissionsPage'
 
 function App() {
   // 使用 useEffect 来检查 token，避免 SSR 问题
@@ -119,30 +116,6 @@ function App() {
           }
         />
         <Route
-          path="/assets/:assetId/permissions"
-          element={
-            isAuthenticated ? (
-              <Layout>
-                <AssetPermissionsPage />
-              </Layout>
-            ) : (
-              <Navigate to="/login" />
-            )
-          }
-        />
-        <Route
-          path="/projects/:projectId/permissions"
-          element={
-            isAuthenticated ? (
-              <Layout>
-                <ProjectPermissionsPage />
-              </Layout>
-            ) : (
-              <Navigate to="/login" />
-            )
-          }
-        />
-        <Route
           path="/users"
           element={
             isAuthenticated ? (
@@ -155,47 +128,11 @@ function App() {
           }
         />
         <Route
-          path="/user-groups"
-          element={
-            isAuthenticated ? (
-              <Layout>
-                <UserGroupsPage />
-              </Layout>
-            ) : (
-              <Navigate to="/login" />
-            )
-          }
-        />
-        <Route
           path="/roles"
           element={
             isAuthenticated ? (
               <Layout>
                 <RolesPage />
-              </Layout>
-            ) : (
-              <Navigate to="/login" />
-            )
-          }
-        />
-        <Route
-          path="/user-roles"
-          element={
-            isAuthenticated ? (
-              <Layout>
-                <UserRolesPage />
-              </Layout>
-            ) : (
-              <Navigate to="/login" />
-            )
-          }
-        />
-        <Route
-          path="/group-roles"
-          element={
-            isAuthenticated ? (
-              <Layout>
-                <GroupRolesPage />
               </Layout>
             ) : (
               <Navigate to="/login" />
@@ -232,6 +169,30 @@ function App() {
             isAuthenticated ? (
               <Layout>
                 <APITokensPage />
+              </Layout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/teams"
+          element={
+            isAuthenticated ? (
+              <Layout>
+                <TeamsPage />
+              </Layout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/scoped-permissions"
+          element={
+            isAuthenticated ? (
+              <Layout>
+                <ScopedPermissionsPage />
               </Layout>
             ) : (
               <Navigate to="/login" />

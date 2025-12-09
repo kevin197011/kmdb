@@ -290,11 +290,17 @@ func (h *AssetHandler) DeleteAsset(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Asset deleted successfully"})
 }
 
+// ProjectAssetCount 项目资产统计
+type ProjectAssetCount struct {
+	ProjectID string `json:"project_id"`
+	Count     int64  `json:"count"`
+}
+
 // GetAssetCountByProject 按项目统计资产数量
 // @Summary 按项目统计资产数量
 // @Tags assets
 // @Produce json
-// @Success 200 {object} map[string]int64
+// @Success 200 {array} ProjectAssetCount
 // @Router /api/v1/assets/stats/project [get]
 func (h *AssetHandler) GetAssetCountByProject(c *gin.Context) {
 	counts, err := h.assetService.GetAssetCountByProject()
@@ -303,6 +309,15 @@ func (h *AssetHandler) GetAssetCountByProject(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, counts)
+	// 转换为数组格式，方便前端处理
+	result := make([]ProjectAssetCount, 0, len(counts))
+	for projectID, count := range counts {
+		result = append(result, ProjectAssetCount{
+			ProjectID: projectID.String(),
+			Count:     count,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 

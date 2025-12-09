@@ -41,10 +41,14 @@ interface Session {
   id: string
   assetId: string
   assetName: string
+  assetIp?: string
   terminal: Terminal
   fitAddon: FitAddon
   ws: WebSocket | null
   connected: boolean
+  sessionIndex: number // 同一主机的会话编号
+  credentialId?: string // 使用的凭证 ID
+  username?: string // 使用的用户名
 }
 
 export default function WebSSHPage() {
@@ -365,14 +369,22 @@ export default function WebSSHPage() {
         }
       })
 
+      // 计算此主机的会话编号
+      const existingSessionCount = sessions.filter(s => s.assetId === selectedAsset.id).length
+      const sessionIndex = existingSessionCount + 1
+
       const newSession: Session = {
         id: session_id,
         assetId: selectedAsset.id,
         assetName: selectedAsset.name,
+        assetIp: selectedAsset.ip,
         terminal,
         fitAddon,
         ws,
         connected: false, // 初始为 false，onopen 时设为 true
+        sessionIndex,
+        credentialId: connectForm.credential_id || undefined,
+        username: username,
       }
 
       setSessions((prev) => [...prev, newSession])
@@ -393,8 +405,9 @@ export default function WebSSHPage() {
       session.terminal.dispose()
       try {
         await api.delete(`/webssh/${sessionId}`)
-      } catch (error: any) {
-        toast({ title: '警告', description: error.response?.data?.error || '关闭会话失败', variant: 'error' })
+      } catch (error: unknown) {
+        const err = error as { response?: { data?: { error?: string } } }
+        toast({ title: '警告', description: err.response?.data?.error || '关闭会话失败', variant: 'error' })
       }
     }
 
@@ -410,6 +423,182 @@ export default function WebSSHPage() {
           terminalContainerRef.current.innerHTML = ''
         }
       }
+    }
+  }
+
+  // 克隆会话：使用相同的连接参数创建新连接
+  const handleCloneSession = async (sessionId: string) => {
+    const session = sessions.find((s) => s.id === sessionId)
+    if (!session) {
+      toast({ title: '错误', description: '找不到要克隆的会话', variant: 'error' })
+      return
+    }
+
+    // 找到对应的资产
+    const asset = assets.find((a) => a.id === session.assetId)
+    if (!asset) {
+      toast({ title: '错误', description: '找不到对应的主机', variant: 'error' })
+      return
+    }
+
+    toast({ title: '正在克隆', description: `正在创建新连接到 ${asset.name}...`, variant: 'default' })
+
+    try {
+      // 创建终端实例
+      const terminal = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+        lineHeight: 1.0,
+        allowProposedApi: true,
+        scrollback: 1000,
+        theme: {
+          background: '#000000',
+          foreground: '#ffffff',
+        },
+      })
+
+      const fitAddon = new FitAddon()
+      terminal.loadAddon(fitAddon)
+
+      // 先附加终端到 DOM
+      if (terminalContainerRef.current) {
+        terminalContainerRef.current.innerHTML = ''
+        terminal.open(terminalContainerRef.current)
+        await new Promise(resolve => setTimeout(resolve, 100))
+        fitAddon.fit()
+      }
+
+      const cols = terminal.cols || 80
+      const rows = terminal.rows || 24
+
+      // 建立 SSH 连接，使用原会话的凭证
+      const response = await api.post('/webssh/connect', {
+        asset_id: asset.id,
+        username: session.username,
+        credential_id: session.credentialId || undefined,
+        cols: cols,
+        rows: rows,
+      })
+
+      const { session_id, ws_url } = response.data
+
+      // 创建 WebSocket 连接
+      const token = localStorage.getItem('access_token')
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const wsUrl = `${protocol}//${window.location.host}${ws_url}?token=${encodeURIComponent(token || '')}`
+      const ws = new WebSocket(wsUrl)
+
+      const sendResize = () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          const currentCols = terminal.cols
+          const currentRows = terminal.rows
+          if (currentCols > 0 && currentRows > 0) {
+            ws.send(JSON.stringify({ type: 'resize', cols: currentCols, rows: currentRows }))
+          }
+        }
+      }
+
+      ws.onopen = () => {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === session_id ? { ...s, connected: true } : s))
+        )
+        toast({ title: '克隆成功', description: `已创建新连接到 ${asset.name}`, variant: 'success' })
+        setTimeout(() => sendResize(), 100)
+      }
+
+      let lastStatusUpdate = 0
+      const STATUS_UPDATE_INTERVAL = 1000
+
+      ws.onmessage = async (event) => {
+        const now = Date.now()
+        if (now - lastStatusUpdate > STATUS_UPDATE_INTERVAL) {
+          setSessions((prev) => {
+            const s = prev.find((x) => x.id === session_id)
+            if (s && !s.connected) {
+              lastStatusUpdate = now
+              return prev.map((x) => (x.id === session_id ? { ...x, connected: true } : x))
+            }
+            return prev
+          })
+        }
+
+        let data: string = ''
+        try {
+          if (event.data instanceof Blob) {
+            const buffer = await event.data.arrayBuffer()
+            data = new TextDecoder('utf-8').decode(buffer)
+          } else if (typeof event.data === 'string') {
+            data = event.data
+          } else if (event.data instanceof ArrayBuffer) {
+            data = new TextDecoder('utf-8').decode(event.data)
+          } else {
+            data = String(event.data)
+          }
+
+          if (data) {
+            terminal.write(data)
+          }
+        } catch (error) {
+          console.error('处理 WebSocket 消息失败:', error)
+        }
+      }
+
+      ws.onerror = () => {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === session_id ? { ...s, connected: false, ws: null } : s))
+        )
+        toast({ title: '连接错误', description: 'WebSocket 连接失败', variant: 'error' })
+        terminal.writeln('\r\n\x1b[31m连接错误\x1b[0m')
+      }
+
+      ws.onclose = (event) => {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === session_id ? { ...s, connected: false, ws: null } : s))
+        )
+
+        if (event.code !== 1000) {
+          toast({ title: '连接断开', description: 'SSH 连接已断开', variant: 'error' })
+          terminal.writeln('\r\n\x1b[31m连接已断开\x1b[0m')
+        } else {
+          terminal.writeln('\r\n\x1b[33m连接已关闭\x1b[0m')
+        }
+      }
+
+      terminal.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(data)
+        } else {
+          setSessions((prev) =>
+            prev.map((s) => (s.id === session_id ? { ...s, connected: false, ws: null } : s))
+          )
+        }
+      })
+
+      // 计算此主机的会话编号
+      const existingSessionCount = sessions.filter(s => s.assetId === asset.id).length
+      const sessionIndex = existingSessionCount + 1
+
+      const newSession: Session = {
+        id: session_id,
+        assetId: asset.id,
+        assetName: asset.name,
+        assetIp: asset.ip,
+        terminal,
+        fitAddon,
+        ws,
+        connected: false,
+        sessionIndex,
+        credentialId: session.credentialId,
+        username: session.username,
+      }
+
+      setSessions((prev) => [...prev, newSession])
+      setActiveSessionId(session_id)
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: string } }; message?: string }
+      const errorMsg = err.response?.data?.error || err.message || '克隆连接失败'
+      toast({ title: '克隆失败', description: errorMsg, variant: 'error' })
     }
   }
 
@@ -450,29 +639,39 @@ export default function WebSSHPage() {
   return (
     <div className="flex h-screen -m-6 overflow-hidden">
         {showHostList && (
-          <div className="w-80 bg-white border-r flex flex-col">
-            <div className="p-4 border-b">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-semibold">主机清单</h2>
+          <div className="w-80 bg-white border-r flex flex-col shadow-lg">
+            {/* Header */}
+            <div className="p-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+              <div className="flex justify-between items-center mb-3">
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <span>💻</span> 主机清单
+                </h2>
                 <button
                   onClick={() => setShowHostList(false)}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="text-white/80 hover:text-white text-xl"
                 >
                   ×
                 </button>
               </div>
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  placeholder="搜索主机..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full px-3 py-2 border rounded text-sm"
-                />
+              <div className="text-sm text-white/80">
+                {filteredAssets.length} 个主机 • {sessions.length} 个活动连接
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="p-3 border-b bg-gray-50 space-y-2">
+              <input
+                type="text"
+                placeholder="🔍 搜索主机..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg text-sm"
+              />
+              <div className="flex gap-2">
                 <select
                   value={filterProject}
                   onChange={(e) => setFilterProject(e.target.value)}
-                  className="w-full px-3 py-2 border rounded text-sm"
+                  className="flex-1 px-2 py-1.5 border rounded text-xs bg-white"
                 >
                   <option value="">所有项目</option>
                   {projects.map((project) => (
@@ -481,108 +680,152 @@ export default function WebSSHPage() {
                     </option>
                   ))}
                 </select>
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showFavoritesOnly}
-                    onChange={(e) => setShowFavoritesOnly(e.target.checked)}
-                    className="rounded"
-                  />
-                  <span className="text-sm">仅显示收藏</span>
-                </label>
-                <div>
-                  <label className="block mb-1 text-sm">分组方式</label>
-                  <select
-                    value={groupBy}
-                    onChange={(e) => setGroupBy(e.target.value as any)}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                  >
-                    <option value="none">不分组</option>
-                    <option value="type">按类型</option>
-                    <option value="project">按项目</option>
-                    <option value="favorite">按收藏</option>
-                  </select>
-                </div>
+                <select
+                  value={groupBy}
+                  onChange={(e) => setGroupBy(e.target.value as 'none' | 'type' | 'project' | 'favorite')}
+                  className="flex-1 px-2 py-1.5 border rounded text-xs bg-white"
+                >
+                  <option value="none">不分组</option>
+                  <option value="type">按类型</option>
+                  <option value="project">按项目</option>
+                  <option value="favorite">按收藏</option>
+                </select>
               </div>
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 hover:text-gray-800">
+                <input
+                  type="checkbox"
+                  checked={showFavoritesOnly}
+                  onChange={(e) => setShowFavoritesOnly(e.target.checked)}
+                  className="rounded"
+                />
+                <span>⭐ 仅显示收藏</span>
+              </label>
             </div>
 
+            {/* Host List */}
             <div className="flex-1 overflow-y-auto">
               <div className="p-2">
                 {Object.entries(groupedAssets()).map(([groupName, groupAssets]) => (
-                  <div key={groupName} className="mb-4">
+                  <div key={groupName} className="mb-3">
                     {groupBy !== 'none' && (
-                      <div className="text-xs font-semibold text-gray-500 mb-2 px-2">
-                        {groupName} ({groupAssets.length})
+                      <div className="text-xs font-bold text-gray-500 mb-2 px-2 uppercase tracking-wide flex items-center gap-1">
+                        <span>{groupName === '收藏' ? '⭐' : groupName === '未收藏' ? '☆' : '📂'}</span>
+                        {groupName}
+                        <span className="text-gray-400 font-normal">({groupAssets.length})</span>
                       </div>
                     )}
                     <div className="space-y-1">
                       {groupAssets.map((asset) => {
-                  const session = sessions.find((s) => s.assetId === asset.id)
-                  return (
-                    <div
-                      key={asset.id}
-                      className={`p-3 rounded cursor-pointer hover:bg-gray-50 ${
-                        activeSessionId === session?.id ? 'bg-blue-50 border border-blue-300' : ''
-                      }`}
-                      onClick={() => {
-                        if (session) {
-                          setActiveSessionId(session.id)
-                        } else {
-                          handleConnect(asset)
-                        }
-                      }}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="font-medium text-sm"
-                              title={asset.ip ? `IP: ${asset.ip}${asset.ssh_port && asset.ssh_port !== 22 ? `:${asset.ssh_port}` : ''}` : '未设置 IP'}
-                            >
-                              {asset.name}
+                        // 获取此主机的所有会话
+                        const assetSessions = sessions.filter((s) => s.assetId === asset.id)
+                        const hasSession = assetSessions.length > 0
+                        const activeSession = assetSessions.find(s => s.id === activeSessionId)
+
+                        return (
+                          <div
+                            key={asset.id}
+                            className={`p-3 rounded-lg transition-all ${
+                              activeSession
+                                ? 'bg-blue-100 border-2 border-blue-400 shadow-sm'
+                                : hasSession
+                                  ? 'bg-green-50 border border-green-200'
+                                  : 'border border-transparent hover:bg-gray-100'
+                            }`}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <div className="font-medium text-sm truncate" title={asset.name}>
+                                    {asset.name}
+                                  </div>
+                                  <button
+                                    onClick={(e) => handleToggleFavorite(asset.id, e)}
+                                    className={`text-sm flex-shrink-0 ${
+                                      favorites.has(asset.id)
+                                        ? 'text-yellow-500'
+                                        : 'text-gray-300 hover:text-yellow-500'
+                                    }`}
+                                  >
+                                    {favorites.has(asset.id) ? '★' : '☆'}
+                                  </button>
+                                </div>
+                                {asset.ip && (
+                                  <div className="text-xs text-gray-500 font-mono mt-0.5">
+                                    {asset.ip}{asset.ssh_port && asset.ssh_port !== 22 ? `:${asset.ssh_port}` : ''}
+                                  </div>
+                                )}
+                                <div className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+                                  <span>{asset.type}</span>
+                                  {asset.project?.name && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="truncate">{asset.project.name}</span>
+                                    </>
+                                  )}
+                                </div>
+
+                                {/* 已连接的会话列表 */}
+                                {hasSession && (
+                                  <div className="mt-2 space-y-1">
+                                    {assetSessions.map((session) => (
+                                      <div
+                                        key={session.id}
+                                        className={`flex items-center justify-between text-xs p-1.5 rounded cursor-pointer ${
+                                          session.id === activeSessionId
+                                            ? 'bg-blue-200'
+                                            : 'bg-white/60 hover:bg-white'
+                                        }`}
+                                        onClick={() => setActiveSessionId(session.id)}
+                                      >
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={`w-1.5 h-1.5 rounded-full ${
+                                            session.connected ? 'bg-green-500' : 'bg-gray-400'
+                                          }`} />
+                                          <span>
+                                            会话 #{session.sessionIndex}
+                                            {session.username && (
+                                              <span className="text-gray-500 ml-1">({session.username})</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            handleCloseSession(session.id)
+                                          }}
+                                          className="text-red-400 hover:text-red-600 px-1"
+                                          title="断开连接"
+                                        >
+                                          ×
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <button
-                              onClick={(e) => handleToggleFavorite(asset.id, e)}
-                              className={`text-sm ${
-                                favorites.has(asset.id)
-                                  ? 'text-yellow-500'
-                                  : 'text-gray-400 hover:text-yellow-500'
-                              }`}
-                            >
-                              ★
-                            </button>
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            {asset.type} {asset.project?.name && `• ${asset.project.name}`}
-                          </div>
-                          {session && (
-                            <div className="text-xs mt-1">
-                              <span
-                                className={`inline-block w-2 h-2 rounded-full mr-1 ${
-                                  session.connected ? 'bg-green-500' : 'bg-gray-400'
-                                }`}
-                              />
-                              {session.connected ? '已连接' : '已断开'}
+
+                            {/* 操作按钮 */}
+                            <div className="mt-2 pt-2 border-t border-gray-200/50 flex gap-2">
+                              <button
+                                onClick={() => handleConnect(asset)}
+                                className="flex-1 text-xs px-2 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                              >
+                                {hasSession ? '➕ 新建连接' : '🔌 连接'}
+                              </button>
+                              {hasSession && assetSessions[0] && (
+                                <button
+                                  onClick={() => handleCloneSession(assetSessions[0].id)}
+                                  className="text-xs px-2 py-1.5 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                                  title="使用相同凭证快速克隆"
+                                >
+                                  📋 克隆
+                                </button>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        <div className="flex gap-1">
-                          {session && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleCloseSession(session.id)
-                              }}
-                              className="text-red-500 hover:text-red-700 text-xs"
-                            >
-                              断开
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                      )
-                    })}
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 ))}
@@ -603,30 +846,62 @@ export default function WebSSHPage() {
                 </button>
               )}
               <div className="flex-1 flex overflow-x-auto">
-                {sessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className={`px-4 py-2 cursor-pointer border-b-2 ${
-                      activeSessionId === session.id
-                        ? 'border-blue-500 bg-white'
-                        : 'border-transparent hover:bg-gray-200'
-                    }`}
-                    onClick={() => setActiveSessionId(session.id)}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{session.assetName}</span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleCloseSession(session.id)
-                        }}
-                        className="text-gray-400 hover:text-red-500"
-                      >
-                        ×
-                      </button>
+                {sessions.map((session) => {
+                  // 计算同一主机有多少个会话
+                  const sameHostSessions = sessions.filter(s => s.assetId === session.assetId)
+                  const showIndex = sameHostSessions.length > 1
+
+                  return (
+                    <div
+                      key={session.id}
+                      className={`group px-3 py-2 cursor-pointer border-b-2 flex items-center gap-1 ${
+                        activeSessionId === session.id
+                          ? 'border-blue-500 bg-white'
+                          : 'border-transparent hover:bg-gray-200'
+                      }`}
+                      onClick={() => setActiveSessionId(session.id)}
+                    >
+                      {/* 连接状态指示器 */}
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        session.connected ? 'bg-green-500' : 'bg-gray-400'
+                      }`} />
+
+                      {/* 主机名和会话编号 */}
+                      <span className="text-sm whitespace-nowrap" title={session.assetIp || session.assetName}>
+                        {session.assetName}
+                        {showIndex && (
+                          <span className="ml-1 text-xs text-gray-500">#{session.sessionIndex}</span>
+                        )}
+                      </span>
+
+                      {/* 操作按钮 */}
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* 克隆按钮 */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleCloneSession(session.id)
+                          }}
+                          className="text-gray-400 hover:text-blue-500 px-1 text-sm"
+                          title="克隆此会话（创建到同一主机的新连接）"
+                        >
+                          📋
+                        </button>
+                        {/* 关闭按钮 */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleCloseSession(session.id)
+                          }}
+                          className="text-gray-400 hover:text-red-500 px-1"
+                          title="关闭此会话"
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -656,13 +931,26 @@ export default function WebSSHPage() {
 
         {showConnectDialog && selectedAsset && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-96">
-              <h3 className="text-lg font-semibold mb-4">
-                连接到 {selectedAsset.name}
-              </h3>
-              <div className="space-y-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 overflow-hidden">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white">
+                <h3 className="text-lg font-bold flex items-center gap-2">
+                  <span>🔌</span> SSH 连接
+                </h3>
+                <div className="text-sm text-white/80 mt-1">
+                  {selectedAsset.name}
+                  {selectedAsset.ip && (
+                    <span className="font-mono ml-2">
+                      ({selectedAsset.ip}{selectedAsset.ssh_port && selectedAsset.ssh_port !== 22 ? `:${selectedAsset.ssh_port}` : ''})
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 space-y-4">
+                {/* Credential Selection */}
                 <div>
-                  <label className="block mb-1 text-sm">选择凭证（可选）</label>
+                  <label className="block mb-2 text-sm font-medium text-gray-700">选择凭证</label>
                   <select
                     value={connectForm.credential_id}
                     onChange={(e) => {
@@ -676,37 +964,41 @@ export default function WebSSHPage() {
                         password: '',
                       })
                     }}
-                    className="w-full px-3 py-2 border rounded"
+                    className="w-full px-3 py-2 border rounded-lg bg-white"
                   >
-                    <option value="">手动输入</option>
+                    <option value="">✏️ 手动输入</option>
                     {availableCredentials
                       .filter(cred => !cred.asset_id)
                       .map((cred) => (
                         <option key={cred.id} value={cred.id}>
-                          {cred.name} ({cred.username}) - {cred.auth_type === 'key' ? '密钥' : '密码'}
+                          {cred.auth_type === 'key' ? '🔐' : '🔑'} {cred.name} ({cred.username})
                         </option>
                       ))}
                   </select>
                 </div>
+
+                {/* Manual Input */}
                 {!connectForm.credential_id && (
                   <div>
-                    <label className="block mb-1 text-sm">用户名</label>
+                    <label className="block mb-2 text-sm font-medium text-gray-700">用户名</label>
                     <input
                       type="text"
                       value={connectForm.username}
                       onChange={(e) =>
                         setConnectForm({ ...connectForm, username: e.target.value })
                       }
-                      className="w-full px-3 py-2 border rounded"
+                      className="w-full px-3 py-2 border rounded-lg"
                       placeholder="root"
                       autoFocus
                     />
                   </div>
                 )}
+
+                {/* Password */}
                 {selectedCredential?.auth_type !== 'key' && (
                   <div>
-                    <label className="block mb-1 text-sm">
-                      {connectForm.credential_id ? '密码（如凭证有密码）' : '密码'}
+                    <label className="block mb-2 text-sm font-medium text-gray-700">
+                      {connectForm.credential_id ? '密码（如需要）' : '密码'}
                     </label>
                     <input
                       type="password"
@@ -714,27 +1006,37 @@ export default function WebSSHPage() {
                       onChange={(e) =>
                         setConnectForm({ ...connectForm, password: e.target.value })
                       }
-                      className="w-full px-3 py-2 border rounded"
-                      placeholder={connectForm.credential_id ? '可选，如果凭证需要密码' : '输入密码'}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder={connectForm.credential_id ? '可选' : '输入密码'}
                     />
                   </div>
                 )}
+
+                {/* Key Auth Info */}
                 {selectedCredential?.auth_type === 'key' && (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
-                    🔑 将使用密钥认证,需输入密码
+                  <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg flex items-start gap-3">
+                    <span className="text-2xl">🔐</span>
+                    <div>
+                      <div className="font-medium text-purple-800">密钥认证</div>
+                      <div className="text-sm text-purple-700 mt-1">
+                        将使用保存的 SSH 密钥进行认证
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
-              <div className="flex gap-2 mt-6">
+
+              {/* Actions */}
+              <div className="px-6 pb-6 flex gap-3">
                 <button
                   onClick={handleConnectSubmit}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
                 >
-                  连接
+                  🚀 连接
                 </button>
                 <button
                   onClick={() => setShowConnectDialog(false)}
-                  className="flex-1 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                  className="flex-1 px-4 py-2.5 border rounded-lg hover:bg-gray-50"
                 >
                   取消
                 </button>

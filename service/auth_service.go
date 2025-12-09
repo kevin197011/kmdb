@@ -15,6 +15,7 @@ type AuthService interface {
 	Login(username, password string) (*LoginResponse, error)
 	RefreshToken(refreshToken string) (*LoginResponse, error)
 	ValidateToken(tokenString string) (*Claims, error)
+	GetUserByID(userID string) (*model.User, error)
 }
 
 type LoginResponse struct {
@@ -140,6 +141,14 @@ func (s *authService) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	return nil, errors.New("无效的 token")
+}
+
+func (s *authService) GetUserByID(userID string) (*model.User, error) {
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, errors.New("无效的用户 ID")
+	}
+	return s.userRepo.GetByID(id)
 }
 
 func (s *authService) generateAccessToken(user *model.User) (string, error) {

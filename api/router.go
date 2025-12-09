@@ -50,10 +50,11 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	assetCredentialRepo := repository.NewAssetCredentialRepository(db)
 	favoriteRepo := repository.NewFavoriteRepository(db)
 	websshHistoryRepo := repository.NewWebSSHHistoryRepository(db)
-	assetPermissionRepo := repository.NewAssetPermissionRepository(db)
-	projectPermissionRepo := repository.NewProjectPermissionRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
 	apiTokenRepo := repository.NewAPITokenRepository(db)
+	// 新权限系统
+	teamRepo := repository.NewTeamRepository(db)
+	scopedPermissionRepo := repository.NewScopedPermissionRepository(db)
 
 	// 初始化 services
 	userService := service.NewUserService(userRepo)
@@ -74,21 +75,14 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	assetService := service.NewAssetServiceWithAudit(assetRepo, auditHook)
 	assetCredentialService := service.NewAssetCredentialService(assetCredentialRepo, assetRepo)
 	favoriteService := service.NewFavoriteService(favoriteRepo, assetRepo)
-	assetPermissionService := service.NewAssetPermissionService(
-		assetPermissionRepo,
-		assetRepo,
-		userRoleRepo,
-		groupRoleRepo,
-		userGroupMemberRepo,
-	)
-	projectPermissionService := service.NewProjectPermissionService(
-		projectPermissionRepo,
-		projectRepo,
-		userRoleRepo,
-		groupRoleRepo,
-		userGroupMemberRepo,
-	)
 	websshService := service.NewWebSSHService(assetRepo, websshHistoryRepo, auditHook)
+	// 新权限系统服务
+	unifiedPermissionService := service.NewUnifiedPermissionService(
+		scopedPermissionRepo,
+		teamRepo,
+		userRoleRepo,
+		roleRepo,
+	)
 
 	// 初始化 handlers
 	userHandler := NewUserHandler(userService)
@@ -100,10 +94,8 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	assetHandler := NewAssetHandler(assetService)
 	assetCredentialHandler := NewAssetCredentialHandler(assetCredentialService)
 	favoriteHandler := NewFavoriteHandler(favoriteService)
-	assetPermissionHandler := NewAssetPermissionHandler(assetPermissionService)
-	projectPermissionHandler := NewProjectPermissionHandler(projectPermissionService)
 	websshHandler := NewWebSSHHandler(websshService, assetCredentialService)
-	auditHandler := NewAuditHandler(auditService)
+	auditHandler := NewAuditHandler(auditService, db)
 	apiTokenHandler := NewAPITokenHandler(apiTokenService)
 	dashboardHandler := NewDashboardHandler(
 		assetRepo,
@@ -113,6 +105,9 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		roleRepo,
 		auditRepo,
 	)
+	// 新权限系统 handlers
+	teamHandler := NewTeamHandler(teamRepo)
+	unifiedPermissionHandler := NewUnifiedPermissionHandler(unifiedPermissionService)
 
 	// 认证中间件（支持 JWT 和 API Token）
 	authMiddleware := middleware.AuthMiddlewareWithAPIToken(authService, apiTokenService, cfg)
@@ -132,6 +127,9 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		protected := v1.Group("")
 		protected.Use(authMiddleware)
 		{
+			// 当前用户信息
+			protected.GET("/auth/me", authHandler.GetMe)
+
 			// Dashboard 路由
 			dashboard := protected.Group("/dashboard")
 			{
@@ -172,10 +170,6 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				projects.PUT("/:id", projectHandler.UpdateProject)
 				projects.DELETE("/:id", projectHandler.DeleteProject)
 				projects.GET("/:id/assets", projectHandler.GetProjectAssets)
-				// 项目权限管理
-				projects.GET("/:id/permissions", projectPermissionHandler.GetProjectPermissions)
-				projects.POST("/:id/permissions/roles", projectPermissionHandler.AssignPermissionToRole)
-				projects.POST("/:id/permissions/users", projectPermissionHandler.AssignPermissionToUser)
 			}
 
 			// Assets 路由
@@ -190,19 +184,9 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				assets.POST("/:id/favorite", favoriteHandler.AddFavorite)
 				assets.DELETE("/:id/favorite", favoriteHandler.RemoveFavorite)
 				assets.GET("/:id/favorite", favoriteHandler.IsFavorite)
-				// 资产权限管理
-				assets.GET("/:id/permissions", assetPermissionHandler.GetAssetPermissions)
-				assets.POST("/:id/permissions/roles", assetPermissionHandler.AssignPermissionToRole)
-				assets.POST("/:id/permissions/users", assetPermissionHandler.AssignPermissionToUser)
 				// 资产凭证管理
 				assets.GET("/:id/credentials", assetCredentialHandler.GetCredentialsByAsset)
 				assets.POST("/:id/credentials/:credential_id/set-default", assetCredentialHandler.SetDefaultCredential)
-			}
-
-			// Asset Permissions 路由
-			assetPermissions := protected.Group("/asset-permissions")
-			{
-				assetPermissions.DELETE("/:permission_id", assetPermissionHandler.RevokePermission)
 			}
 
 			// Asset Credentials 路由
@@ -215,12 +199,6 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				assetCredentials.DELETE("/:id", assetCredentialHandler.DeleteCredential)
 			}
 
-			// Project Permissions 删除路由
-			projectPermissions := protected.Group("/project-permissions")
-			{
-				projectPermissions.DELETE("/:permission_id", projectPermissionHandler.RevokePermission)
-			}
-
 			// Favorites 路由
 			favorites := protected.Group("/favorites")
 			{
@@ -231,6 +209,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			audit := protected.Group("/audit-logs")
 			{
 				audit.GET("", auditHandler.GetAuditLogs)
+				audit.GET("/users", auditHandler.GetUsers)
 			}
 
 			// API Tokens 路由
@@ -289,6 +268,38 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 				webssh.GET("/ws/:session_id", websshHandler.WebSocket)
 				webssh.POST("/:session_id/resize", websshHandler.Resize)
 				webssh.DELETE("/:session_id", websshHandler.Close)
+			}
+
+			// ========== 新权限系统路由 ==========
+
+			// Teams 团队管理路由
+			teams := protected.Group("/teams")
+			{
+				teams.POST("", teamHandler.CreateTeam)
+				teams.GET("", teamHandler.ListTeams)
+				teams.GET("/my", teamHandler.GetMyTeams)
+				teams.GET("/:id", teamHandler.GetTeam)
+				teams.PUT("/:id", teamHandler.UpdateTeam)
+				teams.DELETE("/:id", teamHandler.DeleteTeam)
+				// 团队成员管理
+				teams.GET("/:id/members", teamHandler.GetMembers)
+				teams.POST("/:id/members", teamHandler.AddMember)
+				teams.DELETE("/:id/members/:user_id", teamHandler.RemoveMember)
+				teams.PUT("/:id/members/:user_id/role", teamHandler.UpdateMemberRole)
+			}
+
+			// Scoped Permissions 统一权限路由
+			scopedPerms := protected.Group("/scoped-permissions")
+			{
+				scopedPerms.POST("", unifiedPermissionHandler.GrantPermission)
+				scopedPerms.GET("", unifiedPermissionHandler.ListPermissions)
+				scopedPerms.DELETE("/:id", unifiedPermissionHandler.RevokePermission)
+				scopedPerms.GET("/subject", unifiedPermissionHandler.GetSubjectPermissions)
+				scopedPerms.GET("/resource", unifiedPermissionHandler.GetResourcePermissions)
+				scopedPerms.GET("/check", unifiedPermissionHandler.CheckPermission)
+				scopedPerms.POST("/batch-check", unifiedPermissionHandler.BatchCheckPermission)
+				scopedPerms.GET("/my", unifiedPermissionHandler.GetMyPermissions)
+				scopedPerms.GET("/accessible", unifiedPermissionHandler.GetAccessibleResources)
 			}
 		}
 	}
