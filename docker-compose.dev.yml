@@ -26,7 +26,7 @@ services:
   # 数据库迁移服务
   migrate:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile.migrate
     container_name: kmdb-migrate-dev
     depends_on:
@@ -50,4 +50,3 @@ volumes:
 networks:
   kmdb-network-dev:
     driver: bridge
-

@@ -42,11 +42,10 @@ dev-db-down: ## 停止开发数据库
 	docker-compose -f docker-compose.dev.yml down
 
 test: ## 运行测试
-	go test ./...
+	cd backend && go test ./...
 
 restart: ## 重启服务
 	docker-compose restart
 
 ps: ## 查看服务状态
 	docker-compose ps
-

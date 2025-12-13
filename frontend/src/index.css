@@ -1,0 +1,264 @@
+/* Ant Design Pro 风格全局样式 */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f5f7fa;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* 侧边栏菜单优化 */
+.ant-menu-dark .ant-menu-item-selected {
+  background: linear-gradient(90deg, rgba(24, 144, 255, 0.2) 0%, transparent 100%) !important;
+  border-right: 3px solid #1890ff;
+}
+
+.ant-menu-dark .ant-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.ant-menu-dark .ant-menu-submenu-title:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 卡片样式优化 */
+.ant-card {
+  border-radius: 8px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px 0 rgba(0, 0, 0, 0.02);
+  border: none;
+}
+
+.ant-card-head {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 0 24px;
+  min-height: 56px;
+}
+
+.ant-card-body {
+  padding: 24px;
+}
+
+/* 表格样式优化 */
+.ant-table {
+  border-radius: 8px;
+}
+
+.ant-table-thead > tr > th {
+  background: #fafafa !important;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: #f5f7fa !important;
+}
+
+.ant-table-tbody > tr > td {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* 按钮样式优化 */
+.ant-btn-primary {
+  box-shadow: 0 2px 0 rgba(24, 144, 255, 0.1);
+}
+
+.ant-btn-primary:hover {
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
+}
+
+/* 输入框样式 */
+.ant-input:focus,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused {
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+/* Modal 样式优化 */
+.ant-modal-content {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ant-modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.ant-modal-body {
+  padding: 24px;
+}
+
+.ant-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #f0f0f0;
+}
+
+/* 用户下拉触发器 hover 效果 */
+.user-dropdown-trigger:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* 标签样式 */
+.ant-tag {
+  border-radius: 4px;
+}
+
+/* 面包屑样式 */
+.ant-breadcrumb {
+  font-size: 14px;
+}
+
+.ant-breadcrumb a:hover {
+  color: #1890ff;
+}
+
+/* 页面头部样式 */
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-header-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.85);
+  margin: 0 0 4px 0;
+}
+
+.page-header-subtitle {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+  margin: 0;
+}
+
+/* 统计卡片样式 */
+.stat-card {
+  transition: all 0.3s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* WebSSH 终端样式 */
+.xterm {
+  padding: 10px;
+}
+
+.xterm-viewport {
+  overflow-y: auto !important;
+}
+
+/* 动画效果 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* 加载状态 */
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+}
+
+/* 空状态 */
+.empty-state {
+  padding: 48px 0;
+  text-align: center;
+}
+
+/* 表单项优化 */
+.ant-form-item-label > label {
+  font-weight: 500;
+}
+
+/* Select 下拉框优化 */
+.ant-select-dropdown {
+  border-radius: 8px;
+  box-shadow: 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 9px 28px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* Dropdown 优化 */
+.ant-dropdown {
+  border-radius: 8px;
+}
+
+.ant-dropdown-menu {
+  border-radius: 8px;
+  box-shadow: 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 9px 28px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* 分页器优化 */
+.ant-pagination-item {
+  border-radius: 6px;
+}
+
+.ant-pagination-item-active {
+  border-color: #1890ff;
+}
+
+/* 消息提示优化 */
+.ant-message-notice-content {
+  border-radius: 8px;
+  box-shadow: 0 6px 16px 0 rgba(0, 0, 0, 0.08);
+}
+
+/* 徽章优化 */
+.ant-badge-status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* 列表项 hover */
+.ant-list-item:hover {
+  background: #f5f7fa;
+}
+
+/* Tabs 优化 */
+.ant-tabs-tab:hover {
+  color: #1890ff;
+}
+
+.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #1890ff;
+  font-weight: 500;
+}

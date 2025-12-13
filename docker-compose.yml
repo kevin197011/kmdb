@@ -20,109 +20,15 @@ services:
     networks:
       - kmdb-network
 
-  # 数据库迁移服务
-  migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.migrate
-    container_name: kmdb-migrate
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-kmdb}
-      DB_SSLMODE: disable
-    networks:
-      - kmdb-network
-    restart: "no"
-
-  # 数据库种子服务（创建默认用户）
-  seed:
-    build:
-      context: .
-      dockerfile: Dockerfile.seed
-    container_name: kmdb-seed
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-kmdb}
-      DB_SSLMODE: disable
-      # 默认管理员账号配置
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@kmdb.local}
-    networks:
-      - kmdb-network
-    restart: "no"
-
-  # 权限初始化服务
-  init-permissions:
-    build:
-      context: .
-      dockerfile: Dockerfile.init-permissions
-    container_name: kmdb-init-permissions
-    depends_on:
-      seed:
-        condition: service_completed_successfully
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-kmdb}
-      DB_SSLMODE: disable
-    networks:
-      - kmdb-network
-    restart: "no"
-
-  # 测试数据服务
-  fixtures:
-    build:
-      context: .
-      dockerfile: Dockerfile.fixtures
-    container_name: kmdb-fixtures
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-      seed:
-        condition: service_completed_successfully
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-kmdb}
-      DB_SSLMODE: disable
-    networks:
-      - kmdb-network
-    restart: "no"
-    profiles:
-      - fixtures
-
-  # 后端服务
+  # 后端服务（自动执行迁移和种子数据）
   backend:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     container_name: kmdb-backend
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-      seed:
-        condition: service_completed_successfully
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -133,6 +39,10 @@ services:
       PORT: 8080
       ENV: ${ENV:-production}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      # 默认管理员账号配置
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@kmdb.local}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     volumes:
@@ -150,7 +60,7 @@ services:
   # 前端服务
   frontend:
     build:
-      context: ./web
+      context: ./frontend
       dockerfile: Dockerfile
     container_name: kmdb-frontend
     depends_on:
@@ -161,6 +71,28 @@ services:
       - kmdb-network
     restart: unless-stopped
 
+  # 测试数据服务（可选，用于开发测试）
+  fixtures:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.fixtures
+    container_name: kmdb-fixtures
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-kmdb}
+      DB_SSLMODE: disable
+    networks:
+      - kmdb-network
+    restart: "no"
+    profiles:
+      - fixtures
+
 volumes:
   postgres_data:
     driver: local
@@ -168,4 +100,3 @@ volumes:
 networks:
   kmdb-network:
     driver: bridge
-
