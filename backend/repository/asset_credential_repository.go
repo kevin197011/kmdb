@@ -15,6 +15,8 @@ type AssetCredentialRepository interface {
 	Update(credential *model.AssetCredential) error
 	Delete(id uuid.UUID) error
 	SetDefault(assetID uuid.UUID, credentialID uuid.UUID) error
+	// 检查凭证名称是否已存在（排除指定ID）
+	ExistsByNameAndAssetID(name string, assetID *uuid.UUID, excludeID *uuid.UUID) (bool, error)
 }
 
 type assetCredentialRepository struct {
@@ -80,4 +82,28 @@ func (r *assetCredentialRepository) SetDefault(assetID uuid.UUID, credentialID u
 	return r.db.Model(&model.AssetCredential{}).
 		Where("id = ?", credentialID).
 		Update("is_default", true).Error
+}
+
+// ExistsByNameAndAssetID 检查凭证名称是否已存在
+// assetID 为 nil 表示全局凭证
+// excludeID 用于更新时排除自身
+func (r *assetCredentialRepository) ExistsByNameAndAssetID(name string, assetID *uuid.UUID, excludeID *uuid.UUID) (bool, error) {
+	var count int64
+	query := r.db.Model(&model.AssetCredential{}).Where("name = ?", name)
+
+	if assetID == nil {
+		query = query.Where("asset_id IS NULL")
+	} else {
+		query = query.Where("asset_id = ?", *assetID)
+	}
+
+	if excludeID != nil {
+		query = query.Where("id != ?", *excludeID)
+	}
+
+	err := query.Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }

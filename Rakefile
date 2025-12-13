@@ -17,7 +17,7 @@ task :push do
 end
 
 task :run do
-  system 'docker-compose down'
+  system 'docker-compose down -v'
   system 'docker-compose up -d --build --remove-orphans'
   system 'docker-compose logs -f'
 end

@@ -57,8 +57,9 @@ export default function AssetCredentialsPage() {
   const fetchCredentials = async () => {
     setLoading(true)
     try {
-      const response = await api.get('/asset-credentials?limit=1000')
-      setCredentials(response.data.data || [])
+      const response = await api.get('/asset-credentials')
+      // 后端返回的是数组
+      setCredentials(Array.isArray(response.data) ? response.data : [])
     } catch {
       message.error('加载凭证列表失败')
     } finally {

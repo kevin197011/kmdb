@@ -103,7 +103,9 @@ export default function TeamsPage() {
     setMembersLoading(true)
     try {
       const response = await api.get(`/teams/${teamId}/members`)
-      setTeamMembers(response.data || [])
+      // API 返回 { data: [...] } 格式
+      const members = response.data?.data || response.data || []
+      setTeamMembers(Array.isArray(members) ? members : [])
     } catch {
       message.error('加载团队成员失败')
     } finally {

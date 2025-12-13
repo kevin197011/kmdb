@@ -140,6 +140,15 @@ func (s *assetCredentialService) CreateCredential(credential *model.AssetCredent
 		return errors.New("用户名不能为空")
 	}
 
+	// 检查凭证名称是否已存在
+	exists, err := s.credentialRepo.ExistsByNameAndAssetID(credential.Name, credential.AssetID, nil)
+	if err != nil {
+		return fmt.Errorf("检查凭证名称失败: %w", err)
+	}
+	if exists {
+		return errors.New("凭证名称已存在")
+	}
+
 	// 根据认证类型验证
 	if credential.AuthType == "password" {
 		if credential.Password == nil || *credential.Password == "" {
@@ -212,6 +221,17 @@ func (s *assetCredentialService) UpdateCredential(id uuid.UUID, credential *mode
 	existing, err := s.credentialRepo.GetByID(id)
 	if err != nil {
 		return errors.New("凭证不存在")
+	}
+
+	// 如果修改了名称，检查是否与其他凭证重复
+	if credential.Name != "" && credential.Name != existing.Name {
+		exists, err := s.credentialRepo.ExistsByNameAndAssetID(credential.Name, existing.AssetID, &id)
+		if err != nil {
+			return fmt.Errorf("检查凭证名称失败: %w", err)
+		}
+		if exists {
+			return errors.New("凭证名称已存在")
+		}
 	}
 
 	// 更新字段
